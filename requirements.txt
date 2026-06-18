@@ -2,6 +2,8 @@ crewai
 crewai-tools
 langchain-ollama
 pdf2image
+pillow
+litellm
 python-docx
 pydantic
 pydantic-settings
@@ -9,3 +11,5 @@ python-dotenv
 streamlit
 fastapi
 uvicorn
+python-multipart
+requests
