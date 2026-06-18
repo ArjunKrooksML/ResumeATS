@@ -1,0 +1,11 @@
+crewai
+crewai-tools
+langchain-ollama
+pdf2image
+python-docx
+pydantic
+pydantic-settings
+python-dotenv
+streamlit
+fastapi
+uvicorn
