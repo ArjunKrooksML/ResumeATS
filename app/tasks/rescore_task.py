@@ -1,6 +1,7 @@
 from crewai import Task
 
 from app.agents.scorer_agent import scorer_agent
+from app.crew.guardrails import require_schema
 from app.models.schemas import ScoreResult
 from app.tasks.score_task import SCORING_INSTRUCTIONS
 
@@ -13,4 +14,5 @@ rescore_task = Task(
     expected_output="A ScoreResult with match_score, matched_keywords, and reasoning filled in.",
     agent=scorer_agent,
     output_pydantic=ScoreResult,
+    guardrail=require_schema(ScoreResult),
 )

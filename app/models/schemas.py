@@ -8,7 +8,7 @@ class StructuralRisk(BaseModel):
 
 
 class ParsedResume(BaseModel):
-    raw_text: str
+    raw_text: str = ""
     skills: list[str]
     education: str
     years_experience: int

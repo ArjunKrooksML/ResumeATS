@@ -13,6 +13,7 @@ UPLOAD_DIR = "uploads"
 
 
 def save_upload(file: UploadFile) -> str:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
     extension = os.path.splitext(file.filename)[1]
     file_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4()}{extension}")
     with open(file_path, "wb") as destination:

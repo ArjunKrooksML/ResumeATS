@@ -32,6 +32,7 @@ def transcribe_page(image) -> str:
             ],
         }],
         num_ctx=settings.context_window,
+        num_predict=4096,
         think=False,
     )
     text = response.choices[0].message.content

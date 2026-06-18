@@ -1,6 +1,7 @@
 from crewai import Agent
 
 from app.llm import llm
+from app.tools.current_date import get_current_date
 
 scorer_agent = Agent(
     role="ATS Match Scorer",
@@ -10,6 +11,7 @@ scorer_agent = Agent(
         "platforms like Workday and Greenhouse. You are strict and consistent, "
         "never generous with the score."
     ),
+    tools=[get_current_date],
     llm=llm,
     allow_delegation=False,
     verbose=True,

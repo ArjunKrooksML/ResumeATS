@@ -1,6 +1,7 @@
 from crewai import Task
 
 from app.agents.scorer_agent import scorer_agent
+from app.crew.guardrails import require_schema
 from app.models.schemas import ScoreResult
 from app.tasks.parse_task import parse_task
 
@@ -11,11 +12,13 @@ SCORING_INSTRUCTIONS = (
 
 score_task = Task(
     description=(
-        "Compare the parsed resume against this job description: {job_description}. "
+        "Compare this resume text against the job description: {job_description}. "
+        "Resume text: {resume_text}. "
         + SCORING_INSTRUCTIONS
     ),
     expected_output="A ScoreResult with match_score, matched_keywords, and reasoning filled in.",
     agent=scorer_agent,
     context=[parse_task],
     output_pydantic=ScoreResult,
+    guardrail=require_schema(ScoreResult),
 )

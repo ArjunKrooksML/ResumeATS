@@ -1,6 +1,7 @@
 from crewai import Agent
 
 from app.llm import llm
+from app.tools.current_date import get_current_date
 
 critic_agent = Agent(
     role="Integrity Fact-Checker",
@@ -11,6 +12,7 @@ critic_agent = Agent(
         "achievement not supported by the original text, even if it would score "
         "better."
     ),
+    tools=[get_current_date],
     llm=llm,
     allow_delegation=False,
     verbose=True,

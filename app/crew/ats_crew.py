@@ -13,6 +13,7 @@ from app.tasks.gap_task import gap_task
 from app.tasks.parse_task import parse_task
 from app.tasks.rescore_task import rescore_task
 from app.tasks.score_task import score_task
+from app.tools.resume_reader import extract_resume_text
 
 MAX_REFINEMENT_ROUNDS = 3
 FIRST_ATTEMPT_FEEDBACK = "This is the first attempt, no prior feedback to address."
@@ -20,14 +21,16 @@ FIRST_ATTEMPT_FEEDBACK = "This is the first attempt, no prior feedback to addres
 
 def run_main_pipeline(file_path: str, job_description: str):
     log_step(f"Starting main pipeline for {file_path}")
+    resume_text = extract_resume_text(file_path)
     crew = Crew(
         agents=[parser_agent, scorer_agent, gap_analyst_agent],
         tasks=[parse_task, score_task, gap_task],
         process=Process.sequential,
         verbose=True,
     )
-    crew.kickoff(inputs={"file_path": file_path, "job_description": job_description})
+    crew.kickoff(inputs={"resume_text": resume_text, "job_description": job_description})
     parsed_resume = parse_task.output.pydantic
+    parsed_resume.raw_text = resume_text
     score = score_task.output.pydantic
     gaps = gap_task.output.pydantic
     log_step(f"Parsed resume: {len(parsed_resume.skills)} skills, {len(parsed_resume.structural_risks)} structural risks")
@@ -36,7 +39,7 @@ def run_main_pipeline(file_path: str, job_description: str):
     return parsed_resume, score, gaps
 
 
-def run_refinement_round(job_description: str, feedback: str):
+def run_refinement_round(job_description: str, resume_text: str, feedback: str):
     log_step(f"Running advisor with feedback: {feedback}")
     crew = Crew(
         agents=[advisor_agent, critic_agent],
@@ -44,7 +47,11 @@ def run_refinement_round(job_description: str, feedback: str):
         process=Process.sequential,
         verbose=True,
     )
-    crew.kickoff(inputs={"job_description": job_description, "critic_feedback": feedback})
+    crew.kickoff(inputs={
+        "job_description": job_description,
+        "resume_text": resume_text,
+        "critic_feedback": feedback,
+    })
     critic_output = critic_task.output.pydantic
     log_step(f"Critic approved {len(critic_output.approved_suggestions)} of {len(critic_output.verdicts)} suggestions")
     return critic_output
@@ -61,6 +68,9 @@ def rescore_resume(job_description: str, resume_text: str):
 def apply_suggestions(raw_text: str, suggestions) -> str:
     revised = raw_text
     for suggestion in suggestions:
+        if suggestion.original_bullet not in revised:
+            log_step(f"Suggestion skipped, original_bullet not found verbatim in resume text: {suggestion.original_bullet!r}")
+            continue
         revised = revised.replace(suggestion.original_bullet, suggestion.revised_bullet)
     return revised
 
@@ -83,7 +93,7 @@ def refine_until_improved(job_description: str, raw_text: str, base_score):
     approved = []
     for round_number in range(1, MAX_REFINEMENT_ROUNDS + 1):
         log_step(f"--- Refinement round {round_number}/{MAX_REFINEMENT_ROUNDS} ---")
-        critic_output = run_refinement_round(job_description, feedback)
+        critic_output = run_refinement_round(job_description, raw_text, feedback)
         approved = critic_output.approved_suggestions
         if not approved:
             feedback = (
