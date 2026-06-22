@@ -1,7 +1,6 @@
 from crewai import Agent
 
 from app.llm import llm
-from app.tools.current_date import get_current_date
 
 gap_analyst_agent = Agent(
     role="Skill Gap Analyst",
@@ -11,7 +10,6 @@ gap_analyst_agent = Agent(
         "description, and ranking those gaps by how much they likely hurt the "
         "match score."
     ),
-    tools=[get_current_date],
     llm=llm,
     allow_delegation=False,
     verbose=True,

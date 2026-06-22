@@ -4,14 +4,13 @@ from app.agents.critic_agent import critic_agent
 from app.crew.guardrails import require_schema
 from app.models.schemas import CriticOutput
 from app.tasks.advise_task import advise_task
-from app.tasks.parse_task import parse_task
 
 critic_task = Task(
     description=(
-        "Original resume text:\n{resume_text}\n\n"
-        "Compare each suggested rewrite against the original resume text above. For "
-        "each suggestion, decide if it is grounded in the original text or if "
-        "it invents unverifiable claims. Approve only the suggestions that are "
+        "For each suggested rewrite, use the Verify Text In Resume tool on its "
+        "original_bullet to confirm it actually appears in the candidate's resume. "
+        "Then decide if the rewrite itself is grounded in that real experience or "
+        "if it invents unverifiable claims. Approve only the suggestions that are "
         "grounded.\n\n"
         "Your output is a new CriticOutput object, not the AdvisorOutput you were "
         "given as context — it must be a JSON object with two fields: "
@@ -21,7 +20,7 @@ critic_task = Task(
     ),
     expected_output="A CriticOutput with verdicts for every suggestion and a list of approved_suggestions.",
     agent=critic_agent,
-    context=[parse_task, advise_task],
+    context=[advise_task],
     output_pydantic=CriticOutput,
     guardrail=require_schema(CriticOutput),
 )

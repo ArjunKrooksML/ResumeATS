@@ -1,6 +1,6 @@
 crewai
 crewai-tools
-langchain-ollama
+openai
 pdf2image
 pillow
 litellm

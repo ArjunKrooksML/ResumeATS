@@ -1,7 +1,6 @@
 from crewai import Agent
 
 from app.llm import llm
-from app.tools.current_date import get_current_date
 
 parser_agent = Agent(
     role="Resume Structuring Specialist",
@@ -11,7 +10,6 @@ parser_agent = Agent(
         "including notes about layout problems that could trip up an ATS parser. "
         "You organize the content faithfully without judging its quality."
     ),
-    tools=[get_current_date],
     llm=llm,
     allow_delegation=False,
     verbose=True,

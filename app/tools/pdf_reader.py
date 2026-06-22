@@ -23,7 +23,8 @@ def encode_image(image) -> str:
 def transcribe_page(image) -> str:
     encoded = encode_image(image)
     response = litellm.completion(
-        model=settings.ollama_model,
+        model=settings.openai_model,
+        api_key=settings.openai_api_key,
         messages=[{
             "role": "user",
             "content": [
@@ -31,13 +32,11 @@ def transcribe_page(image) -> str:
                 {"type": "image_url", "image_url": f"data:image/png;base64,{encoded}"},
             ],
         }],
-        num_ctx=settings.context_window,
-        num_predict=4096,
-        think=False,
+        max_tokens=settings.max_output_tokens,
     )
     text = response.choices[0].message.content
     if not text.strip():
-        log_step("Vision OCR returned empty text for a page, likely truncated by context window")
+        log_step("Vision OCR returned empty text for a page, likely truncated by the output token limit")
     return text
 
 

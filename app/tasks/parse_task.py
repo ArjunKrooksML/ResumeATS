@@ -11,12 +11,16 @@ parse_task = Task(
         "education level, and total years of professional experience. "
         "From any STRUCTURE notes in the text, build a list of structural "
         "risks, judging severity (low, medium, high) by how much resume content "
-        "each risk could hide from a real ATS parser."
+        "each risk could hide from a real ATS parser.\n\n"
+        "Also assess the transcription itself: set is_reliable to false if the "
+        "text above looks empty, garbled, cut off mid-sentence, or otherwise "
+        "untrustworthy as a real resume, and explain why in reliability_reason. "
+        "Otherwise set is_reliable to true."
     ),
     expected_output=(
-        "A ParsedResume with skills, education, years_experience, and "
-        "structural_risks filled in. Leave raw_text as an empty string — "
-        "it is filled in separately."
+        "A ParsedResume with skills, education, years_experience, "
+        "structural_risks, is_reliable, and reliability_reason filled in. Leave "
+        "raw_text as an empty string — it is filled in separately."
     ),
     agent=parser_agent,
     output_pydantic=ParsedResume,

@@ -13,6 +13,8 @@ class ParsedResume(BaseModel):
     education: str
     years_experience: int
     structural_risks: list[StructuralRisk]
+    is_reliable: bool = Field(description="False if the transcription/parse itself looks unreliable, garbled, or empty")
+    reliability_reason: str = Field(description="Why the parse is or isn't trustworthy")
 
 
 class ScoreResult(BaseModel):
@@ -46,6 +48,13 @@ class FactCheckVerdict(BaseModel):
 class CriticOutput(BaseModel):
     verdicts: list[FactCheckVerdict]
     approved_suggestions: list[Suggestion]
+
+
+class RefinementDecision(BaseModel):
+    accept_this_round: bool = Field(description="True if this round's score/suggestions should replace the current best result")
+    next_step: str = Field(description="One of: stop, retry_advisor, rerun_gap_analysis")
+    reason: str
+    feedback: str = Field(description="Direction for whichever agent runs next, empty if stopping")
 
 
 class AnalyzeRequest(BaseModel):
