@@ -85,7 +85,7 @@ class AnalysisFlow(Flow[AnalysisState]):
 
     @listen(transcribe)
     def parse(self):
-        run_step([parser_agent], [parse_task], {"resume_text": self.state.resume_text}, verbose=True)
+        run_step([parser_agent], [parse_task], {"resume_text": self.state.resume_text})
         parsed = parse_task.output.pydantic
         parsed.raw_text = self.state.resume_text
         self.state.parsed_resume = parsed
@@ -102,7 +102,7 @@ class AnalysisFlow(Flow[AnalysisState]):
     def retry_transcription(self):
         self.state.retried_parse = True
         self.state.resume_text = extract_resume_text(self.state.file_path)
-        run_step([parser_agent], [parse_task], {"resume_text": self.state.resume_text}, verbose=True)
+        run_step([parser_agent], [parse_task], {"resume_text": self.state.resume_text})
         parsed = parse_task.output.pydantic
         parsed.raw_text = self.state.resume_text
         self.state.parsed_resume = parsed
@@ -117,7 +117,6 @@ class AnalysisFlow(Flow[AnalysisState]):
         run_step(
             [scorer_agent], [score_task],
             {"resume_text": self.state.resume_text, "job_description": self.state.job_description},
-            verbose=True,
         )
         self.state.base_score = score_task.output.pydantic
         self.state.best_score = self.state.base_score
@@ -128,7 +127,6 @@ class AnalysisFlow(Flow[AnalysisState]):
         run_step(
             [gap_analyst_agent], [gap_task],
             {"resume_text": self.state.resume_text, "job_description": self.state.job_description},
-            verbose=True,
         )
         self.state.gaps = gap_task.output.pydantic
         self.state.current_gaps = self.state.gaps
@@ -153,7 +151,6 @@ class AnalysisFlow(Flow[AnalysisState]):
                 "critic_feedback": self.state.feedback,
                 "priority_gaps": "; ".join(self.state.current_gaps.priority_gaps),
             },
-            verbose=True,
         )
         critic_output = critic_task.output.pydantic
         self.state.approved = critic_output.approved_suggestions
