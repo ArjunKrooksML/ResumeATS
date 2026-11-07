@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -17,10 +19,24 @@ class ParsedResume(BaseModel):
     reliability_reason: str = Field(description="Why the parse is or isn't trustworthy")
 
 
+class RequirementCoverage(BaseModel):
+    requirement: str
+    status: str = Field(description="covered, partial, or missing")
+    covered_by: str = ""
+
+
 class ScoreResult(BaseModel):
     match_score: int = Field(ge=0, le=100)
     matched_keywords: list[str]
     reasoning: str
+    coverage: list[RequirementCoverage] = Field(default_factory=list)
+
+
+class JDAnalysis(BaseModel):
+    credibility_score: int = Field(ge=0, le=100, description="0=junk/vague, 100=clear and realistic")
+    red_flags: list[str]
+    is_analyzable: bool = Field(description="False if the JD is too vague to produce meaningful analysis")
+    summary: str
 
 
 class GapAnalysis(BaseModel):
@@ -33,6 +49,11 @@ class Suggestion(BaseModel):
     original_bullet: str
     revised_bullet: str
     addresses_gap: str
+
+
+class GapScreenResult(BaseModel):
+    actionable_gaps: list[str] = Field(description="Gaps that can be addressed with existing resume experience")
+    skipped_gaps: list[str] = Field(description="Gaps with no basis in the resume — cannot be reframed")
 
 
 class AdvisorOutput(BaseModel):
@@ -57,6 +78,13 @@ class RefinementDecision(BaseModel):
     feedback: str = Field(description="Direction for whichever agent runs next, empty if stopping")
 
 
+class GapClosure(BaseModel):
+    gap: str
+    status: str = Field(description="closed, attempted, screened, or open")
+    closed_in_round: Optional[int] = None
+    closed_by: Optional[str] = None
+
+
 class AnalyzeRequest(BaseModel):
     job_description: str
 
@@ -67,3 +95,6 @@ class AnalysisReport(BaseModel):
     gaps: GapAnalysis
     final_suggestions: list[Suggestion]
     iterations_used: int
+    jd_analysis: Optional[JDAnalysis] = None
+    gap_closures: list[GapClosure] = Field(default_factory=list)
+    coverage: list[RequirementCoverage] = Field(default_factory=list)

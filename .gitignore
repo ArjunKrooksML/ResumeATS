@@ -5,3 +5,5 @@ venv/
 !README.md
 *__pycache__/
 uploads/
+logs/
+*.pdf

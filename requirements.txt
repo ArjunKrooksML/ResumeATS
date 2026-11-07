@@ -1,7 +1,9 @@
 crewai
 crewai-tools
+loguru
 openai
 pdf2image
+pdfplumber
 pillow
 litellm
 python-docx

@@ -40,6 +40,30 @@ def transcribe_page(image) -> str:
     return text
 
 
-def read_pdf(file_path: str) -> str:
-    pages = convert_from_path(file_path)
+def _extract_text_layer(file_path: str) -> str:
+    try:
+        import pdfplumber
+        with pdfplumber.open(file_path) as pdf:
+            pages = [page.extract_text() or "" for page in pdf.pages]
+        return "\n\n".join(pages)
+    except Exception:
+        return ""
+
+
+def _is_usable(text: str) -> bool:
+    if len(text.strip()) < 200:
+        return False
+    printable = sum(1 for c in text if c.isalnum() or c in " .,;:-()/\n\t@+")
+    return printable / len(text) > 0.75
+
+
+def read_pdf(file_path: str, dpi: int = 200) -> str:
+    # high-quality retries (dpi > 200) force OCR — the initial extraction was flagged unreliable
+    if dpi == 200:
+        native = _extract_text_layer(file_path)
+        if _is_usable(native):
+            log_step("Used native PDF text layer (skipped OCR)")
+            return native
+        log_step("Native text extraction insufficient, falling back to vision OCR")
+    pages = convert_from_path(file_path, dpi=dpi)
     return "\n\n".join(transcribe_page(page) for page in pages)

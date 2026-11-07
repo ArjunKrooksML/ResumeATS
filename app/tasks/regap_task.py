@@ -12,6 +12,13 @@ regap_task = Task(
         "feedback: {strategist_feedback}\n\n"
         "Produce a revised, sharper list of missing keywords, missing skills, "
         "and priority gaps that directly addresses that feedback.\n\n"
+        "Rules (same as always):\n"
+        "- Only flag concrete, teachable technical skills, tools, or methodologies.\n"
+        "- Product team names and business domains are NEVER gaps "
+        "(e.g. 'Recommendations', 'Trust & Safety', 'Growth', 'Revenue', 'Profile', 'Chat').\n"
+        "- Event names are not gaps (e.g. 'Hackathon').\n"
+        "- Marketing copy and generic descriptors are not gaps.\n"
+        "- 3 to 7 high-impact gaps only.\n\n"
         "Your output is a GapAnalysis with missing_keywords, missing_skills, "
         "and priority_gaps filled in."
     ),
