@@ -20,16 +20,16 @@ from app.models.schemas import (
     AnalysisReport, GapAnalysis, GapClosure, GapScreenResult,
     JDAnalysis, ParsedResume, RequirementCoverage, ScoreResult, Suggestion,
 )
-from app.tasks.advise_task import advise_task
-from app.tasks.critic_task import critic_task
+from app.tasks.advise_task import make_advise_task
+from app.tasks.critic_task import make_critic_task
 from app.tasks.gap_task import make_gap_task
-from app.tasks.jd_task import jd_task
-from app.tasks.parse_task import parse_task
-from app.tasks.regap_task import regap_task
-from app.tasks.rescore_task import rescore_task
-from app.tasks.review_task import review_task
+from app.tasks.jd_task import make_jd_task
+from app.tasks.parse_task import make_parse_task
+from app.tasks.regap_task import make_regap_task
+from app.tasks.rescore_task import make_rescore_task
+from app.tasks.review_task import make_review_task
 from app.tasks.score_task import make_score_task
-from app.tasks.screen_task import screen_task
+from app.tasks.screen_task import make_screen_task
 from app.tools.consult import reset_consult_tools, track_active_agents
 from app.tools.resume_reader import extract_resume_text
 from app.tools.resume_verification import set_resume_text
@@ -77,7 +77,6 @@ def _deduplicate_gaps(gaps: GapAnalysis, matched_keywords: list[str]) -> GapAnal
 
 
 def _match_gap(ref: str, lifecycle: dict) -> Optional[str]:
-    # exact match first, then substring fallback for LLM paraphrasing
     ref_lower = ref.lower().strip()
     for key in lifecycle:
         if key.lower().strip() == ref_lower:
@@ -100,6 +99,7 @@ class AnalysisState(BaseModel):
     base_score: Optional[ScoreResult] = None
     best_score: Optional[ScoreResult] = None
     revised_text: str = ""
+    # suggestions are staged in self.approved, committed to accumulated only on Strategist accept
     accumulated_suggestions: list[Suggestion] = Field(default_factory=list)
     candidate_text: str = ""
     gaps: Optional[GapAnalysis] = None
@@ -107,6 +107,10 @@ class AnalysisState(BaseModel):
     gap_lifecycle: dict[str, str] = Field(default_factory=dict)
     gap_closed_by: dict[str, str] = Field(default_factory=dict)
     gap_closed_round: dict[str, int] = Field(default_factory=dict)
+    # pending: staged closures awaiting Strategist accept
+    pending_closures: dict[str, str] = Field(default_factory=dict)
+    pending_closed_by: dict[str, str] = Field(default_factory=dict)
+    pending_closed_round: dict[str, int] = Field(default_factory=dict)
     round_number: int = 0
     feedback: str = FIRST_ATTEMPT_FEEDBACK
     gap_feedback: str = ""
@@ -118,6 +122,20 @@ class AnalysisState(BaseModel):
 class AnalysisFlow(Flow[AnalysisState]):
     initial_state: type[AnalysisState] = AnalysisState
 
+    def __init__(self):
+        super().__init__()
+        # each flow instance gets its own task objects — no shared mutable task state between requests
+        self.parse_task = make_parse_task()
+        self.jd_task = make_jd_task()
+        self.score_task = make_score_task()
+        self.gap_task = make_gap_task()
+        self.screen_task = make_screen_task()
+        self.advise_task = make_advise_task()
+        self.critic_task = make_critic_task(self.advise_task)
+        self.rescore_task = make_rescore_task()
+        self.review_task = make_review_task()
+        self.regap_task = make_regap_task()
+
     @start()
     def transcribe(self):
         log_step(f"Starting main pipeline for {self.state.file_path}")
@@ -126,8 +144,8 @@ class AnalysisFlow(Flow[AnalysisState]):
 
     @listen(transcribe)
     def parse(self):
-        run_step([parser_agent], [parse_task], {"resume_text": self.state.resume_text})
-        parsed = parse_task.output.pydantic
+        run_step([parser_agent], [self.parse_task], {"resume_text": self.state.resume_text})
+        parsed = self.parse_task.output.pydantic
         parsed.raw_text = self.state.resume_text
         self.state.parsed_resume = parsed
         log_step(f"Parsed resume: {len(parsed.skills)} skills, {len(parsed.structural_risks)} structural risks")
@@ -144,8 +162,8 @@ class AnalysisFlow(Flow[AnalysisState]):
         self.state.retried_parse = True
         self.state.resume_text = extract_resume_text(self.state.file_path, high_quality=True)
         self.state.original_resume_text = self.state.resume_text
-        run_step([parser_agent], [parse_task], {"resume_text": self.state.resume_text})
-        parsed = parse_task.output.pydantic
+        run_step([parser_agent], [self.parse_task], {"resume_text": self.state.resume_text})
+        parsed = self.parse_task.output.pydantic
         parsed.raw_text = self.state.resume_text
         self.state.parsed_resume = parsed
         log_step(f"Re-parsed resume: {len(parsed.skills)} skills, reliable={parsed.is_reliable}")
@@ -154,12 +172,32 @@ class AnalysisFlow(Flow[AnalysisState]):
     def after_retry(self) -> str:
         return "score"
 
+    # JD analysis now runs in parallel with Scorer and Gap Analyst
     @listen("score")
-    def analyze_jd(self):
-        run_step([jd_analyst_agent], [jd_task], {"job_description": self.state.job_description})
-        self.state.jd_analysis = jd_task.output.pydantic
+    async def score_gap_jd(self):
+        base_inputs = {
+            "resume_text": self.state.resume_text,
+            "job_description": self.state.job_description,
+        }
+        jd_inputs = {"job_description": self.state.job_description}
+
+        t0 = time.perf_counter()
+        await asyncio.gather(
+            Crew(agents=[jd_analyst_agent], tasks=[self.jd_task], process=Process.sequential).akickoff(inputs=jd_inputs),
+            Crew(agents=[scorer_agent], tasks=[self.score_task], process=Process.sequential).akickoff(inputs=base_inputs),
+            Crew(agents=[gap_analyst_agent], tasks=[self.gap_task], process=Process.sequential).akickoff(inputs=base_inputs),
+        )
+        elapsed = time.perf_counter() - t0
+
+        # JD analysis
+        self.state.jd_analysis = self.jd_task.output.pydantic
         jd = self.state.jd_analysis
-        if jd.red_flags:
+        if not jd.is_analyzable:
+            log_step(
+                f"JD flagged as not analyzable (credibility: {jd.credibility_score}/100) — "
+                "gap results may be low quality"
+            )
+        elif jd.red_flags:
             log_step(
                 f"JD credibility: {jd.credibility_score}/100 — "
                 f"{len(jd.red_flags)} red flag(s): {'; '.join(jd.red_flags[:2])}"
@@ -167,40 +205,27 @@ class AnalysisFlow(Flow[AnalysisState]):
         else:
             log_step(f"JD credibility: {jd.credibility_score}/100 — no red flags")
 
-    @listen(analyze_jd)
-    async def score_and_gap(self):
-        score_t = make_score_task()
-        gap_t = make_gap_task()
-        inputs = {"resume_text": self.state.resume_text, "job_description": self.state.job_description}
-
-        t0 = time.perf_counter()
-        await asyncio.gather(
-            Crew(agents=[scorer_agent], tasks=[score_t], process=Process.sequential).akickoff(inputs=inputs),
-            Crew(agents=[gap_analyst_agent], tasks=[gap_t], process=Process.sequential).akickoff(inputs=inputs),
-        )
-        elapsed = time.perf_counter() - t0
-
-        self.state.base_score = score_t.output.pydantic
+        # Scorer + Gap
+        self.state.base_score = self.score_task.output.pydantic
         self.state.best_score = self.state.base_score
-        raw_gaps = gap_t.output.pydantic
+        raw_gaps = self.gap_task.output.pydantic
         self.state.gaps = _deduplicate_gaps(raw_gaps, self.state.base_score.matched_keywords)
         self.state.current_gaps = self.state.gaps
         self.state.revised_text = self.state.resume_text
         self.state.gap_lifecycle = {g: "open" for g in self.state.gaps.priority_gaps}
 
         removed = len(raw_gaps.priority_gaps) - len(self.state.gaps.priority_gaps)
-
-        log_verbose(f"[Scorer raw output]\n{score_t.output.raw}")
-        log_verbose(f"[Gap Analyst raw output]\n{gap_t.output.raw}")
+        log_verbose(f"[Scorer raw output]\n{self.score_task.output.raw}")
+        log_verbose(f"[Gap Analyst raw output]\n{self.gap_task.output.raw}")
         log_step(
             f"Score: {self.state.base_score.match_score}/100 | "
             f"{len(self.state.gaps.priority_gaps)} priority gaps"
             + (f" ({removed} deduped)" if removed else "")
             + f" | {len(self.state.base_score.coverage)} requirements mapped"
-            + f" | parallel in {elapsed:.1f}s"
+            + f" | 3-way parallel in {elapsed:.1f}s"
         )
 
-    @router(score_and_gap)
+    @router(score_gap_jd)
     def begin_refinement(self) -> str:
         return "advise"
 
@@ -210,13 +235,13 @@ class AnalysisFlow(Flow[AnalysisState]):
         log_step(f"--- Refinement round {self.state.round_number}/{MAX_REFINEMENT_ROUNDS} ---")
 
         run_step(
-            [advisor_agent], [screen_task],
+            [advisor_agent], [self.screen_task],
             {
                 "resume_text": self.state.revised_text,
                 "priority_gaps": "; ".join(self.state.current_gaps.priority_gaps),
             },
         )
-        screened: GapScreenResult = screen_task.output.pydantic
+        screened: GapScreenResult = self.screen_task.output.pydantic
         actionable = screened.actionable_gaps
         log_step(
             f"Gap screening: {len(actionable)} actionable, "
@@ -237,7 +262,7 @@ class AnalysisFlow(Flow[AnalysisState]):
 
         set_resume_text(self.state.original_resume_text)
         run_step(
-            [advisor_agent, critic_agent], [advise_task, critic_task],
+            [advisor_agent, critic_agent], [self.advise_task, self.critic_task],
             {
                 "job_description": self.state.job_description,
                 "resume_text": self.state.revised_text,
@@ -245,15 +270,16 @@ class AnalysisFlow(Flow[AnalysisState]):
                 "priority_gaps": "; ".join(actionable),
             },
         )
-        critic_output = critic_task.output.pydantic
+        critic_output = self.critic_task.output.pydantic
         self.state.approved = critic_output.approved_suggestions
         self.state.rejection_summary = describe_rejections(critic_output.verdicts)
         log_step(
             f"Critic approved {len(critic_output.approved_suggestions)} of {len(critic_output.verdicts)} suggestions"
         )
 
-        # track gap lifecycle: closed vs attempted-but-rejected
-        all_attempted = advise_task.output.pydantic.suggestions if advise_task.output else []
+        # Stage gap lifecycle changes — "attempted" is committed now (always true),
+        # "closed" is staged in pending and only committed if Strategist accepts this round
+        all_attempted = self.advise_task.output.pydantic.suggestions if self.advise_task.output else []
         closed_gaps = {s.addresses_gap for s in self.state.approved if s.addresses_gap}
         for s in all_attempted:
             if not s.addresses_gap:
@@ -262,12 +288,12 @@ class AnalysisFlow(Flow[AnalysisState]):
             if not matched:
                 continue
             if s.addresses_gap in closed_gaps:
-                self.state.gap_lifecycle[matched] = "closed"
-                self.state.gap_closed_round[matched] = self.state.round_number
-                if matched not in self.state.gap_closed_by:
+                self.state.pending_closures[matched] = "closed"
+                self.state.pending_closed_round[matched] = self.state.round_number
+                if matched not in self.state.pending_closed_by:
                     for approved in self.state.approved:
                         if approved.addresses_gap == s.addresses_gap:
-                            self.state.gap_closed_by[matched] = approved.revised_bullet
+                            self.state.pending_closed_by[matched] = approved.revised_bullet
                             break
             elif self.state.gap_lifecycle.get(matched) not in ("closed", "screened"):
                 self.state.gap_lifecycle[matched] = "attempted"
@@ -275,13 +301,13 @@ class AnalysisFlow(Flow[AnalysisState]):
     @listen(run_advisor_round)
     def rescore_after_advisor(self):
         if self.state.approved:
-            self.state.accumulated_suggestions = self.state.accumulated_suggestions + self.state.approved
+            # suggestions are NOT yet committed — Strategist decides below
             self.state.candidate_text = apply_suggestions(self.state.revised_text, self.state.approved)
             run_step(
-                [scorer_agent], [rescore_task],
+                [scorer_agent], [self.rescore_task],
                 {"job_description": self.state.job_description, "resume_text": self.state.candidate_text},
             )
-            self.state.new_score = rescore_task.output.pydantic
+            self.state.new_score = self.rescore_task.output.pydantic
             log_step(f"Re-score after applying approved suggestions: {self.state.new_score.match_score}/100")
         else:
             self.state.candidate_text = self.state.revised_text
@@ -290,7 +316,7 @@ class AnalysisFlow(Flow[AnalysisState]):
 
     @router(rescore_after_advisor)
     def strategist_decision(self) -> str:
-        run_step([strategist_agent], [review_task], {
+        run_step([strategist_agent], [self.review_task], {
             "job_description": self.state.job_description,
             "round_number": self.state.round_number,
             "max_rounds": MAX_REFINEMENT_ROUNDS,
@@ -300,7 +326,7 @@ class AnalysisFlow(Flow[AnalysisState]):
             "new_reasoning": self.state.new_score.reasoning,
             "rejection_summary": self.state.rejection_summary,
         })
-        decision = review_task.output.pydantic
+        decision = self.review_task.output.pydantic
         log_step(
             f"Strategist: accept_this_round={decision.accept_this_round}, "
             f"next_step={decision.next_step} — {decision.reason}"
@@ -309,6 +335,17 @@ class AnalysisFlow(Flow[AnalysisState]):
         if decision.accept_this_round:
             self.state.best_score = self.state.new_score
             self.state.revised_text = self.state.candidate_text
+            # commit staged suggestions and gap closures now that the round is accepted
+            self.state.accumulated_suggestions = self.state.accumulated_suggestions + self.state.approved
+            for gap, status in self.state.pending_closures.items():
+                self.state.gap_lifecycle[gap] = status
+            self.state.gap_closed_by.update(self.state.pending_closed_by)
+            self.state.gap_closed_round.update(self.state.pending_closed_round)
+
+        # always discard pending state regardless of accept/reject
+        self.state.pending_closures = {}
+        self.state.pending_closed_by = {}
+        self.state.pending_closed_round = {}
 
         if self.state.round_number >= MAX_REFINEMENT_ROUNDS:
             log_step(f"Hit max refinement rounds ({MAX_REFINEMENT_ROUNDS}), returning best effort")
@@ -323,17 +360,16 @@ class AnalysisFlow(Flow[AnalysisState]):
 
     @listen("gap")
     def run_gap_round(self):
-        run_step([gap_analyst_agent], [regap_task], {
+        run_step([gap_analyst_agent], [self.regap_task], {
             "job_description": self.state.job_description,
             "resume_text": self.state.revised_text,
             "strategist_feedback": self.state.gap_feedback,
         })
         self.state.current_gaps = _deduplicate_gaps(
-            regap_task.output.pydantic,
+            self.regap_task.output.pydantic,
             self.state.base_score.matched_keywords if self.state.base_score else [],
         )
         self.state.feedback = FIRST_ATTEMPT_FEEDBACK
-        # add any new gaps from the rerun to lifecycle tracking
         for g in self.state.current_gaps.priority_gaps:
             if _match_gap(g, self.state.gap_lifecycle) is None:
                 self.state.gap_lifecycle[g] = "open"
@@ -366,7 +402,8 @@ class AnalysisFlow(Flow[AnalysisState]):
             iterations_used=self.state.round_number,
             jd_analysis=self.state.jd_analysis,
             gap_closures=gap_closures,
-            coverage=list(self.state.base_score.coverage) if self.state.base_score else [],
+            # coverage from best_score so it matches the final accepted resume state
+            coverage=list(self.state.best_score.coverage) if self.state.best_score else [],
         )
 
 

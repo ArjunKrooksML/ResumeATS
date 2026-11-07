@@ -1,3 +1,4 @@
+import html
 import requests
 import streamlit as st
 
@@ -132,7 +133,7 @@ with tab_overview:
         st.markdown("**Matched keywords**")
         kws = score.get("matched_keywords", [])
         if kws:
-            st.markdown(" ".join(f'<span class="badge covered">{k}</span>' for k in kws),
+            st.markdown(" ".join(f'<span class="badge covered">{html.escape(k)}</span>' for k in kws),
                         unsafe_allow_html=True)
         else:
             st.caption("None detected.")
@@ -153,7 +154,7 @@ with tab_overview:
             if flags:
                 st.markdown("**Red flags**")
                 for f in flags:
-                    st.markdown(f'<div class="red-flag-item">⚠ {f}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="red-flag-item">⚠ {html.escape(f)}</div>', unsafe_allow_html=True)
             else:
                 st.success("No red flags detected.")
         else:
@@ -176,11 +177,12 @@ with tab_coverage:
         st.divider()
 
         for item in sorted(cov, key=lambda x: {"covered": 0, "partial": 1, "missing": 2}.get(x["status"], 3)):
-            evidence = item.get("covered_by", "").strip()
+            evidence = html.escape(item.get("covered_by", "").strip())
+            req_name = html.escape(item["requirement"])
             evidence_html = f'<span class="req-evidence">{evidence}</span>' if evidence else ""
             st.markdown(
                 f'<div class="req-row">'
-                f'<span class="req-name">{item["requirement"]}</span>'
+                f'<span class="req-name">{req_name}</span>'
                 f'{badge(item["status"], item["status"])}'
                 f'{evidence_html}'
                 f'</div>',
@@ -203,7 +205,7 @@ with tab_gaps:
                     st.markdown(f"**Closed in round {g.get('closed_in_round', '?')}**")
                     if g.get("closed_by"):
                         st.markdown(f'<div class="label">Revised bullet</div>', unsafe_allow_html=True)
-                        st.markdown(f'<div class="revised-text">{g["closed_by"]}</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="revised-text">{html.escape(g["closed_by"])}</div>', unsafe_allow_html=True)
                 elif status == "attempted":
                     st.markdown("Advisor attempted rewrites but Critic rejected all — no grounded suggestion found.")
                 elif status == "screened":
@@ -218,14 +220,17 @@ with tab_suggestions:
         st.info("No suggestions were approved this run.")
     else:
         for s in suggs:
+            orig = html.escape(s["original_bullet"])
+            revised = html.escape(s["revised_bullet"])
+            gap_label = html.escape(s["addresses_gap"])
             st.markdown(
                 f'<div class="card">'
                 f'<div class="label">Original</div>'
-                f'<div class="original-text">{s["original_bullet"]}</div>'
+                f'<div class="original-text">{orig}</div>'
                 f'<div style="margin:10px 0;border-top:1px dashed #e2e8f0;"></div>'
                 f'<div class="label">Revised</div>'
-                f'<div class="revised-text">{s["revised_bullet"]}</div>'
-                f'<div class="gap-label">{badge(s["addresses_gap"], "closed")}</div>'
+                f'<div class="revised-text">{revised}</div>'
+                f'<div class="gap-label">{badge(gap_label, "closed")}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -242,7 +247,7 @@ with tab_risks:
     if parsed.get("skills"):
         st.markdown("**Detected skills**")
         st.markdown(
-            " ".join(f'<span class="badge covered">{s}</span>' for s in parsed["skills"]),
+            " ".join(f'<span class="badge covered">{html.escape(s)}</span>' for s in parsed["skills"]),
             unsafe_allow_html=True,
         )
 
